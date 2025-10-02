@@ -3,9 +3,47 @@ import 'package:flutter/material.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:window_manager/window_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // TODOs:
-// - implement settings page
+// - add "hitzone" before and after 0%
+// - add sound and visual effect when failing to hit within the "hitzone"
+
+enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness }
+
+extension SettingsKeyExtension on SettingsKey {
+  String get asString {
+    switch (this) {
+      case SettingsKey.sound:
+        return 'sound';
+      case SettingsKey.visualEffect:
+        return 'visualEffect';
+      case SettingsKey.hitzoneBefore:
+        return 'hitzoneBefore';
+      case SettingsKey.hitzoneAfter:
+        return 'hitzoneAfter';
+      case SettingsKey.durationBase:
+        return 'durationBase';
+      case SettingsKey.durationRandomness:
+        return 'durationRandomness';
+    }
+  }
+}
+
+class DefaultSettings {
+  static const Map<SettingsKey, dynamic> values = {
+    SettingsKey.sound: true,
+    SettingsKey.visualEffect: true,
+    SettingsKey.hitzoneBefore: 100, // ms
+    SettingsKey.hitzoneAfter: 100, // ms
+    SettingsKey.durationBase: 500, // ms
+    SettingsKey.durationRandomness: 1000, // ms
+  };
+
+  static T get<T>(SettingsKey key) {
+    return values[key] as T;
+  }
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -92,7 +130,14 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  void _startDeLoading() {
+  void _buttonPressed() {
+    // Placeholder for button press action
+    if (!_isDeLoading) {
+      _startDeLoading();
+    }
+  }
+
+  void _startDeLoading() async {
     // Stop any ongoing animation before starting a new one
     _animationController?.stop();
 
@@ -102,7 +147,14 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     });
 
     // Generate a random duration between 500 ms (0.5 seconds) and 1500 ms (1.5 seconds)
-    final int randomDurationMs = _random.nextInt(1001) + 500;
+    // Read durationBase and durationRandomness from SettingsKey
+    final prefs = await SharedPreferences.getInstance();
+    final int durationBase =
+        prefs.getInt(SettingsKey.durationBase.toString()) ?? DefaultSettings.get<int>(SettingsKey.durationBase);
+    final int durationRandomness =
+        prefs.getInt(SettingsKey.durationRandomness.toString()) ??
+        DefaultSettings.get<int>(SettingsKey.durationRandomness);
+    final int randomDurationMs = _random.nextInt(durationRandomness + 1) + durationBase;
     _animationController!.duration = Duration(milliseconds: randomDurationMs);
 
     // Reset the animation controller's value to 0.0 before starting
@@ -146,12 +198,135 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: _startDeLoading, autofocus: true, child: const Icon(Icons.play_arrow)),
+            ElevatedButton(onPressed: _buttonPressed, autofocus: true, child: const Icon(Icons.play_arrow)),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: null,
+        onPressed: () async {
+          final prefs = await SharedPreferences.getInstance();
+          // Load current settings or defaults
+          Map<SettingsKey, dynamic> currentSettings = {};
+          for (var key in SettingsKey.values) {
+            switch (key) {
+              case SettingsKey.sound:
+              case SettingsKey.visualEffect:
+                currentSettings[key] = prefs.getBool(key.asString) ?? DefaultSettings.get<bool>(key);
+                break;
+              default:
+                currentSettings[key] = prefs.getInt(key.asString) ?? DefaultSettings.get<int>(key);
+            }
+          }
+
+          if (!mounted) return;
+          showDialog(
+            context: context,
+            builder: (context) {
+              // Local state for dialog
+              Map<SettingsKey, dynamic> dialogSettings = Map.of(currentSettings);
+
+              return StatefulBuilder(
+                builder: (context, setState) {
+                  return AlertDialog(
+                    title: const Text('Settings'),
+                    content: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SwitchListTile(
+                            title: const Text('Sound'),
+                            value: dialogSettings[SettingsKey.sound],
+                            onChanged: (val) => setState(() => dialogSettings[SettingsKey.sound] = val),
+                          ),
+                          SwitchListTile(
+                            title: const Text('Visual Effect'),
+                            value: dialogSettings[SettingsKey.visualEffect],
+                            onChanged: (val) => setState(() => dialogSettings[SettingsKey.visualEffect] = val),
+                          ),
+                          ListTile(
+                            title: const Text('Hitzone Before (ms)'),
+                            trailing: SizedBox(
+                              width: 80,
+                              child: TextFormField(
+                                initialValue: dialogSettings[SettingsKey.hitzoneBefore].toString(),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) => setState(() {
+                                  dialogSettings[SettingsKey.hitzoneBefore] =
+                                      int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneBefore];
+                                }),
+                              ),
+                            ),
+                          ),
+                          ListTile(
+                            title: const Text('Hitzone After (ms)'),
+                            trailing: SizedBox(
+                              width: 80,
+                              child: TextFormField(
+                                initialValue: dialogSettings[SettingsKey.hitzoneAfter].toString(),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) => setState(() {
+                                  dialogSettings[SettingsKey.hitzoneAfter] =
+                                      int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneAfter];
+                                }),
+                              ),
+                            ),
+                          ),
+                          ListTile(
+                            title: const Text('Duration Base (ms)'),
+                            trailing: SizedBox(
+                              width: 80,
+                              child: TextFormField(
+                                initialValue: dialogSettings[SettingsKey.durationBase].toString(),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) => setState(() {
+                                  dialogSettings[SettingsKey.durationBase] =
+                                      int.tryParse(val) ?? dialogSettings[SettingsKey.durationBase];
+                                }),
+                              ),
+                            ),
+                          ),
+                          ListTile(
+                            title: const Text('Duration Randomness (ms)'),
+                            trailing: SizedBox(
+                              width: 80,
+                              child: TextFormField(
+                                initialValue: dialogSettings[SettingsKey.durationRandomness].toString(),
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) => setState(() {
+                                  dialogSettings[SettingsKey.durationRandomness] =
+                                      int.tryParse(val) ?? dialogSettings[SettingsKey.durationRandomness];
+                                }),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                      ElevatedButton(
+                        onPressed: () async {
+                          // Save settings
+                          for (var key in SettingsKey.values) {
+                            var value = dialogSettings[key];
+                            if (value is bool) {
+                              await prefs.setBool(key.asString, value);
+                            } else if (value is int) {
+                              await prefs.setInt(key.asString, value);
+                            }
+                          }
+                          Navigator.of(context).pop();
+                          setState(() {}); // Refresh main page if needed
+                        },
+                        child: const Text('Save'),
+                      ),
+                    ],
+                  );
+                },
+              );
+            },
+          );
+        },
         tooltip: 'Preferences',
         child: const Icon(Icons.settings),
       ),
