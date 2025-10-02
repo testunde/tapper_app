@@ -1,7 +1,36 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:window_manager/window_manager.dart';
 
-void main() => runApp(const MyApp());
+// TODOs:
+// - change default app icon
+// - implement settings page
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Set default window size for desktop platforms only
+  if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+    await windowManager.ensureInitialized();
+
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(600, 600),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.normal,
+    );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -9,7 +38,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Loading Bar App',
+      title: 'Tapper App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.blue),
       home: const MyHomePage(),
@@ -25,8 +54,8 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateMixin {
-  bool _isLoading = false;
-  double _progress = 1.0; // Initial state: 100% full
+  bool _isDeLoading = false;
+  double _progress = 0.0; // Initial state: 0% full
   final Random _random = Random();
   AnimationController? _animationController;
 
@@ -50,9 +79,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     _animationController!.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         setState(() {
-          _isLoading = false;
-          // Reset progress to full (1.0) when de-loading is complete
-          _progress = 1.0;
+          _isDeLoading = false;
+          // Reset progress to empty (0.0) when de-loading is complete
+          _progress = 0.0;
         });
       }
     });
@@ -64,12 +93,12 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     super.dispose();
   }
 
-  void _startLoading() {
+  void _startDeLoading() {
     // Stop any ongoing animation before starting a new one
     _animationController?.stop();
 
     setState(() {
-      _isLoading = true;
+      _isDeLoading = true;
       _progress = 1.0; // Ensure progress starts at 100% visually
     });
 
@@ -86,7 +115,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Loading Progress')),
+      appBar: AppBar(title: const Text('Tapper App: De-Loading Progress')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -101,7 +130,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
             ),
             const SizedBox(height: 30),
             SizedBox(
-              width: 350, // Fixed width for the progress bar
+              width: MediaQuery.of(context).size.width * 0.6, // 60% of column width
               child: LinearProgressIndicator(
                 value: _progress, // The progress bar value is now driven by _progress
                 backgroundColor: Colors.grey[300],
@@ -114,26 +143,18 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
             Text('${(_progress * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 30),
             Text(
-              (_isLoading) ? 'Status: De-Loading...' : 'Status: Ready',
+              (_isDeLoading) ? 'Status: De-Loading...' : 'Status: Ready',
               style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(
-              // Disable the button while loading to prevent multiple starts
-              // onPressed: _isLoading ? null : _startLoading,
-              onPressed: _startLoading,
-              autofocus: true,
-              //tooltip: 'Start Countdown',
-              child: const Icon(Icons.play_arrow),
-            ),
+            ElevatedButton(onPressed: _startDeLoading, autofocus: true, child: const Icon(Icons.play_arrow)),
           ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        // Disable the button while loading to prevent multiple starts
-        onPressed: _isLoading ? null : _startLoading,
-        tooltip: 'Start Countdown',
-        child: const Icon(Icons.play_arrow),
+        onPressed: null,
+        tooltip: 'Preferences',
+        child: const Icon(Icons.settings),
       ),
     );
   }

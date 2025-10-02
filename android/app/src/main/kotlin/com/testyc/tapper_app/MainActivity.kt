@@ -1,4 +1,4 @@
-package com.example.tapper_app
+package com.testyc.tapper_app
 
 import io.flutter.embedding.android.FlutterActivity
 

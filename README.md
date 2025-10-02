@@ -1,3 +1,3 @@
-# tapper_app
+# tapper app
 
-A new Flutter project.
+A simple (gamified) tapper app.
