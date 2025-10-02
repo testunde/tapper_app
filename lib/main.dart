@@ -222,7 +222,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     final int durationRandomness =
         prefs.getInt(SettingsKey.durationRandomness.toString()) ??
         DefaultSettings.get<int>(SettingsKey.durationRandomness);
-    final int randomDurationMs = _random.nextInt(durationRandomness + 1) + durationBase;
+    final int randomDurationMs = (_random.nextInt(durationRandomness + 1) - (durationRandomness ~/ 2)) + durationBase;
     _animationController!.duration = Duration(milliseconds: randomDurationMs);
 
     // Reset the animation controller's value to 0.0 before starting
