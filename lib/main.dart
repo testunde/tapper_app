@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness }
 
@@ -184,13 +185,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     _startDeLoading();
   }
 
-  void _playSound() {
+  void _playSound() async {
     // play short cue to notify user of failed hit
-    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
-      SystemSound.play(SystemSoundType.alert);
-    } else {
-      SystemSound.play(SystemSoundType.click);
-    }
+    final player = AudioPlayer();
+    await player.play(AssetSource('sound/failed_SFX.wav'));
   }
 
   void _triggerVisualEffect() {
