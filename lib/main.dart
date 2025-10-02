@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:window_manager/window_manager.dart';
 
 // TODOs:
-// - change default app icon
 // - implement settings page
 
 void main() async {
