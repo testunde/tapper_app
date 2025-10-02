@@ -4,10 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-// TODOs:
-// - add "hitzone" before and after 0%
-// - add sound and visual effect when failing to hit within the "hitzone"
+import 'package:flutter/services.dart';
 
 enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness }
 
@@ -34,10 +31,10 @@ class DefaultSettings {
   static const Map<SettingsKey, dynamic> values = {
     SettingsKey.sound: true,
     SettingsKey.visualEffect: true,
-    SettingsKey.hitzoneBefore: 100, // ms
-    SettingsKey.hitzoneAfter: 100, // ms
-    SettingsKey.durationBase: 500, // ms
-    SettingsKey.durationRandomness: 1000, // ms
+    SettingsKey.hitzoneBefore: 150, // ms
+    SettingsKey.hitzoneAfter: 200, // ms
+    SettingsKey.durationBase: 1000, // ms
+    SettingsKey.durationRandomness: 500, // ms
   };
 
   static T get<T>(SettingsKey key) {
@@ -95,10 +92,16 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
   double _progress = 0.0; // Initial state: 0% full
   final Random _random = Random();
   AnimationController? _animationController;
+  final barBgColorDefault = Colors.grey[300];
+  final barFgColorDefault = Colors.blue;
+  Color? barBgColor;
+  Color? barFgColor;
 
   @override
   void initState() {
     super.initState();
+    barBgColor = barBgColorDefault;
+    barFgColor = barFgColorDefault;
     _animationController = AnimationController(
       vsync: this, // The TickerProvider
       duration: const Duration(seconds: 1), // Default duration, will be overridden
@@ -120,6 +123,26 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
           // Reset progress to empty (0.0) when de-loading is complete
           _progress = 0.0;
         });
+
+        // Start a timer for "hitzoneAfter" after de-loading completes
+        () async {
+          final prefs = await SharedPreferences.getInstance();
+          final int hitzoneAfter =
+              prefs.getInt(SettingsKey.hitzoneAfter.asString) ?? DefaultSettings.get<int>(SettingsKey.hitzoneAfter);
+          Future.delayed(Duration(milliseconds: hitzoneAfter), () {
+            if (_isDeLoading) {
+              return; // If user has started a new de-loading, skip effects
+            }
+
+            if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
+              _playSound();
+            }
+            if (prefs.getBool(SettingsKey.visualEffect.asString) ??
+                DefaultSettings.get<bool>(SettingsKey.visualEffect)) {
+              _triggerVisualEffect();
+            }
+          });
+        }();
       }
     });
   }
@@ -132,9 +155,56 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
 
   void _buttonPressed() {
     // Placeholder for button press action
-    if (!_isDeLoading) {
-      _startDeLoading();
+    if (_isDeLoading) {
+      () async {
+        final prefs = await SharedPreferences.getInstance();
+        final int hitzoneBefore =
+            prefs.getInt(SettingsKey.hitzoneBefore.asString) ?? DefaultSettings.get<int>(SettingsKey.hitzoneBefore);
+        if (_animationController != null) {
+          final int remainingMs = ((1.0 - _animationController!.value) * _animationController!.duration!.inMilliseconds)
+              .round();
+          if (remainingMs > hitzoneBefore) {
+            if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
+              _playSound();
+            }
+            if (prefs.getBool(SettingsKey.visualEffect.asString) ??
+                DefaultSettings.get<bool>(SettingsKey.visualEffect)) {
+              _triggerVisualEffect();
+            }
+          }
+        }
+      }();
+      _animationController?.stop();
+      setState(() {
+        _isDeLoading = false;
+        _progress = 0.0; // Reset progress to empty
+      });
     }
+
+    _startDeLoading();
+  }
+
+  void _playSound() {
+    // play short cue to notify user of failed hit
+    if (!kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux)) {
+      SystemSound.play(SystemSoundType.alert);
+    } else {
+      SystemSound.play(SystemSoundType.click);
+    }
+  }
+
+  void _triggerVisualEffect() {
+    // colorize the background briefly
+    setState(() {
+      barBgColor = Colors.red;
+      barFgColor = Colors.yellow;
+    });
+    Future.delayed(const Duration(milliseconds: 200), () {
+      setState(() {
+        barBgColor = barBgColorDefault;
+        barFgColor = barFgColorDefault;
+      });
+    });
   }
 
   void _startDeLoading() async {
@@ -146,7 +216,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
       _progress = 1.0; // Ensure progress starts at 100% visually
     });
 
-    // Generate a random duration between 500 ms (0.5 seconds) and 1500 ms (1.5 seconds)
+    // Generate a random duration based on user settings
     // Read durationBase and durationRandomness from SettingsKey
     final prefs = await SharedPreferences.getInstance();
     final int durationBase =
@@ -184,8 +254,8 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               width: MediaQuery.of(context).size.width * 0.6, // 60% of column width
               child: LinearProgressIndicator(
                 value: _progress, // The progress bar value is now driven by _progress
-                backgroundColor: Colors.grey[300],
-                valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).primaryColor),
+                backgroundColor: barBgColor,
+                valueColor: AlwaysStoppedAnimation<Color>(barFgColor!),
                 minHeight: 10.0,
                 borderRadius: BorderRadius.circular(4.0),
               ),
@@ -198,7 +268,16 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
             ),
             const SizedBox(height: 20),
-            ElevatedButton(onPressed: _buttonPressed, autofocus: true, child: const Icon(Icons.play_arrow)),
+            SizedBox(
+              width: 100,
+              height: 70,
+              child: ElevatedButton(
+                onPressed: _buttonPressed,
+                autofocus: true,
+                style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(0)),
+                child: const Icon(Icons.play_arrow, size: 48),
+              ),
+            ),
           ],
         ),
       ),
@@ -227,6 +306,20 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
 
               return StatefulBuilder(
                 builder: (context, setState) {
+                  // Create controllers for text fields
+                  final hitzoneBeforeController = TextEditingController(
+                    text: dialogSettings[SettingsKey.hitzoneBefore].toString(),
+                  );
+                  final hitzoneAfterController = TextEditingController(
+                    text: dialogSettings[SettingsKey.hitzoneAfter].toString(),
+                  );
+                  final durationBaseController = TextEditingController(
+                    text: dialogSettings[SettingsKey.durationBase].toString(),
+                  );
+                  final durationRandomnessController = TextEditingController(
+                    text: dialogSettings[SettingsKey.durationRandomness].toString(),
+                  );
+
                   return AlertDialog(
                     title: const Text('Settings'),
                     content: SingleChildScrollView(
@@ -248,12 +341,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             trailing: SizedBox(
                               width: 80,
                               child: TextFormField(
-                                initialValue: dialogSettings[SettingsKey.hitzoneBefore].toString(),
+                                controller: hitzoneBeforeController,
                                 keyboardType: TextInputType.number,
-                                onChanged: (val) => setState(() {
-                                  dialogSettings[SettingsKey.hitzoneBefore] =
-                                      int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneBefore];
-                                }),
+                                onChanged: (val) => dialogSettings[SettingsKey.hitzoneBefore] =
+                                    int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneBefore],
                               ),
                             ),
                           ),
@@ -262,12 +353,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             trailing: SizedBox(
                               width: 80,
                               child: TextFormField(
-                                initialValue: dialogSettings[SettingsKey.hitzoneAfter].toString(),
+                                controller: hitzoneAfterController,
                                 keyboardType: TextInputType.number,
-                                onChanged: (val) => setState(() {
-                                  dialogSettings[SettingsKey.hitzoneAfter] =
-                                      int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneAfter];
-                                }),
+                                onChanged: (val) => dialogSettings[SettingsKey.hitzoneAfter] =
+                                    int.tryParse(val) ?? dialogSettings[SettingsKey.hitzoneAfter],
                               ),
                             ),
                           ),
@@ -276,12 +365,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             trailing: SizedBox(
                               width: 80,
                               child: TextFormField(
-                                initialValue: dialogSettings[SettingsKey.durationBase].toString(),
+                                controller: durationBaseController,
                                 keyboardType: TextInputType.number,
-                                onChanged: (val) => setState(() {
-                                  dialogSettings[SettingsKey.durationBase] =
-                                      int.tryParse(val) ?? dialogSettings[SettingsKey.durationBase];
-                                }),
+                                onChanged: (val) => dialogSettings[SettingsKey.durationBase] =
+                                    int.tryParse(val) ?? dialogSettings[SettingsKey.durationBase],
                               ),
                             ),
                           ),
@@ -290,12 +377,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             trailing: SizedBox(
                               width: 80,
                               child: TextFormField(
-                                initialValue: dialogSettings[SettingsKey.durationRandomness].toString(),
+                                controller: durationRandomnessController,
                                 keyboardType: TextInputType.number,
-                                onChanged: (val) => setState(() {
-                                  dialogSettings[SettingsKey.durationRandomness] =
-                                      int.tryParse(val) ?? dialogSettings[SettingsKey.durationRandomness];
-                                }),
+                                onChanged: (val) => dialogSettings[SettingsKey.durationRandomness] =
+                                    int.tryParse(val) ?? dialogSettings[SettingsKey.durationRandomness],
                               ),
                             ),
                           ),
@@ -304,6 +389,21 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                     ),
                     actions: [
                       TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+                      TextButton(
+                        onPressed: () => setState(() {
+                          // Reset all settings to default values
+                          for (var key in SettingsKey.values) {
+                            dialogSettings[key] = DefaultSettings.values[key];
+                          }
+                          // Update text field controllers
+                          hitzoneBeforeController.text = DefaultSettings.values[SettingsKey.hitzoneBefore].toString();
+                          hitzoneAfterController.text = DefaultSettings.values[SettingsKey.hitzoneAfter].toString();
+                          durationBaseController.text = DefaultSettings.values[SettingsKey.durationBase].toString();
+                          durationRandomnessController.text = DefaultSettings.values[SettingsKey.durationRandomness]
+                              .toString();
+                        }),
+                        child: const Text('Reset to Defaults'),
+                      ),
                       ElevatedButton(
                         onPressed: () async {
                           // Save settings
