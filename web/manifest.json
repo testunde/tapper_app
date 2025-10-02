@@ -1,5 +1,5 @@
 {
-    "name": "tapper_app",
+    "name": "Tapper App",
     "short_name": "tapper_app",
     "start_url": ".",
     "display": "standalone",
