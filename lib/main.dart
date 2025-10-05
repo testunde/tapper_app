@@ -4,7 +4,6 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
 
 enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness }
@@ -218,9 +217,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     // Read durationBase and durationRandomness from SettingsKey
     final prefs = await SharedPreferences.getInstance();
     final int durationBase =
-        prefs.getInt(SettingsKey.durationBase.toString()) ?? DefaultSettings.get<int>(SettingsKey.durationBase);
+        prefs.getInt(SettingsKey.durationBase.asString) ?? DefaultSettings.get<int>(SettingsKey.durationBase);
     final int durationRandomness =
-        prefs.getInt(SettingsKey.durationRandomness.toString()) ??
+        prefs.getInt(SettingsKey.durationRandomness.asString) ??
         DefaultSettings.get<int>(SettingsKey.durationRandomness);
     final int randomDurationMs = (_random.nextInt(durationRandomness + 1) - (durationRandomness ~/ 2)) + durationBase;
     _animationController!.duration = Duration(milliseconds: randomDurationMs);
