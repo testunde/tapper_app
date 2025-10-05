@@ -6,7 +6,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 
-enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness }
+enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness, penaltyTime }
 
 extension SettingsKeyExtension on SettingsKey {
   String get asString {
@@ -23,6 +23,8 @@ extension SettingsKeyExtension on SettingsKey {
         return 'durationBase';
       case SettingsKey.durationRandomness:
         return 'durationRandomness';
+      case SettingsKey.penaltyTime:
+        return 'penaltyTime';
     }
   }
 }
@@ -35,6 +37,7 @@ class DefaultSettings {
     SettingsKey.hitzoneAfter: 200, // ms
     SettingsKey.durationBase: 1000, // ms
     SettingsKey.durationRandomness: 500, // ms
+    SettingsKey.penaltyTime: 1000, // ms
   };
 
   static T get<T>(SettingsKey key) {
@@ -89,6 +92,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateMixin {
   bool _isDeLoading = false;
+  bool _isPenaltyActive = false;
   double _progress = 0.0; // Initial state: 0% full
   final Random _random = Random();
   AnimationController? _animationController;
@@ -134,13 +138,8 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               return; // If user has started a new de-loading, skip effects
             }
 
-            if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
-              _playSound();
-            }
-            if (prefs.getBool(SettingsKey.visualEffect.asString) ??
-                DefaultSettings.get<bool>(SettingsKey.visualEffect)) {
-              _triggerVisualEffect();
-            }
+            // Missed hitzone - apply penalty
+            _applyPenalty();
           });
         }();
       }
@@ -154,6 +153,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
   }
 
   void _buttonPressed() {
+    // Don't allow button press during penalty
+    if (_isPenaltyActive) return;
+
     // Placeholder for button press action
     if (_isDeLoading) {
       () async {
@@ -164,13 +166,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
           final int remainingMs = ((1.0 - _animationController!.value) * _animationController!.duration!.inMilliseconds)
               .round();
           if (remainingMs > hitzoneBefore) {
-            if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
-              _playSound();
-            }
-            if (prefs.getBool(SettingsKey.visualEffect.asString) ??
-                DefaultSettings.get<bool>(SettingsKey.visualEffect)) {
-              _triggerVisualEffect();
-            }
+            // Missed hitzone - apply penalty
+            _applyPenalty();
+            return;
           }
         }
       }();
@@ -230,6 +228,39 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     _animationController!.forward();
   }
 
+  void _applyPenalty() async {
+    final prefs = await SharedPreferences.getInstance();
+    final int penaltyTime =
+        prefs.getInt(SettingsKey.penaltyTime.asString) ?? DefaultSettings.get<int>(SettingsKey.penaltyTime);
+
+    // Play sound and visual effect for penalty
+    if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
+      _playSound();
+    }
+    if (prefs.getBool(SettingsKey.visualEffect.asString) ?? DefaultSettings.get<bool>(SettingsKey.visualEffect)) {
+      _triggerVisualEffect();
+    }
+
+    if (penaltyTime <= 0) return; // No penalty time set
+
+    setState(() {
+      _isPenaltyActive = true;
+      _isDeLoading = false;
+      _progress = 0.0;
+    });
+
+    _animationController?.stop();
+
+    // End penalty after specified time
+    Future.delayed(Duration(milliseconds: penaltyTime), () {
+      if (mounted) {
+        setState(() {
+          _isPenaltyActive = false;
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -258,18 +289,25 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               ),
             ),
             const SizedBox(height: 15),
-            Text('${(_progress * 100).toStringAsFixed(0)}%', style: Theme.of(context).textTheme.headlineSmall),
+            Text(
+              '${(_progress * 100).toStringAsFixed(0)}%',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: _isPenaltyActive ? Colors.grey : null),
+            ),
             const SizedBox(height: 30),
             Text(
-              (_isDeLoading) ? 'Status: De-Loading...' : 'Status: Ready',
-              style: const TextStyle(fontStyle: FontStyle.italic, color: Colors.grey),
+              _isPenaltyActive
+                  ? 'Status: Penalty Active (UI Frozen)'
+                  : (_isDeLoading)
+                  ? 'Status: De-Loading...'
+                  : 'Status: Ready',
+              style: TextStyle(fontStyle: FontStyle.italic, color: _isPenaltyActive ? Colors.red : Colors.grey),
             ),
             const SizedBox(height: 20),
             SizedBox(
               width: 100,
               height: 70,
               child: ElevatedButton(
-                onPressed: _buttonPressed,
+                onPressed: _isPenaltyActive ? null : _buttonPressed,
                 autofocus: true,
                 style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(0)),
                 child: const Icon(Icons.play_arrow, size: 48),
@@ -315,6 +353,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                   );
                   final durationRandomnessController = TextEditingController(
                     text: dialogSettings[SettingsKey.durationRandomness].toString(),
+                  );
+                  final penaltyTimeController = TextEditingController(
+                    text: dialogSettings[SettingsKey.penaltyTime].toString(),
                   );
 
                   return AlertDialog(
@@ -381,6 +422,18 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                               ),
                             ),
                           ),
+                          ListTile(
+                            title: const Text('Penalty Time (ms)'),
+                            trailing: SizedBox(
+                              width: 80,
+                              child: TextFormField(
+                                controller: penaltyTimeController,
+                                keyboardType: TextInputType.number,
+                                onChanged: (val) => dialogSettings[SettingsKey.penaltyTime] =
+                                    int.tryParse(val) ?? dialogSettings[SettingsKey.penaltyTime],
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -398,6 +451,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                           durationBaseController.text = DefaultSettings.values[SettingsKey.durationBase].toString();
                           durationRandomnessController.text = DefaultSettings.values[SettingsKey.durationRandomness]
                               .toString();
+                          penaltyTimeController.text = DefaultSettings.values[SettingsKey.penaltyTime].toString();
                         }),
                         child: const Text('Reset to Defaults'),
                       ),
