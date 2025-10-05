@@ -6,7 +6,17 @@ import 'package:window_manager/window_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 
-enum SettingsKey { sound, visualEffect, hitzoneBefore, hitzoneAfter, durationBase, durationRandomness, penaltyTime }
+enum SettingsKey {
+  sound,
+  visualEffect,
+  hitzoneBefore,
+  hitzoneAfter,
+  durationBase,
+  durationRandomness,
+  penaltyTime,
+  showBestStreak,
+  bestStreak,
+}
 
 extension SettingsKeyExtension on SettingsKey {
   String get asString {
@@ -25,6 +35,11 @@ extension SettingsKeyExtension on SettingsKey {
         return 'durationRandomness';
       case SettingsKey.penaltyTime:
         return 'penaltyTime';
+      case SettingsKey.showBestStreak:
+        return 'showBestStreak';
+      // following two are not really settings, but we use keys to prevent typos (and they are saved in the settings ecosystem anyway)
+      case SettingsKey.bestStreak:
+        return 'bestStreak';
     }
   }
 }
@@ -38,6 +53,8 @@ class DefaultSettings {
     SettingsKey.durationBase: 1000, // ms
     SettingsKey.durationRandomness: 500, // ms
     SettingsKey.penaltyTime: 1000, // ms
+    SettingsKey.showBestStreak: false, // false = show current, true = show best
+    SettingsKey.bestStreak: 0,
   };
 
   static T get<T>(SettingsKey key) {
@@ -53,7 +70,7 @@ void main() async {
     await windowManager.ensureInitialized();
 
     WindowOptions windowOptions = const WindowOptions(
-      size: Size(600, 600),
+      size: Size(600, 800),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
@@ -101,11 +118,17 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
   Color? barBgColor;
   Color? barFgColor;
 
+  // Streak tracking
+  int _currentStreak = 0;
+  int _bestStreak = 0;
+  bool _streakIncrementedThisRound = false; // Track if streak was already incremented
+
   @override
   void initState() {
     super.initState();
     barBgColor = barBgColorDefault;
     barFgColor = barFgColorDefault;
+    _loadStreakData();
     _animationController = AnimationController(
       vsync: this, // The TickerProvider
       duration: const Duration(seconds: 1), // Default duration, will be overridden
@@ -135,6 +158,11 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               prefs.getInt(SettingsKey.hitzoneAfter.asString) ?? DefaultSettings.get<int>(SettingsKey.hitzoneAfter);
           Future.delayed(Duration(milliseconds: hitzoneAfter), () {
             if (_isDeLoading) {
+              if (!_streakIncrementedThisRound && !_isPenaltyActive) {
+                // If the user didn't hit in the hitzoneAfter, increment streak due to already triggered de-loading
+                _incrementStreak();
+              }
+              _streakIncrementedThisRound = false;
               return; // If user has started a new de-loading, skip effects
             }
 
@@ -150,6 +178,34 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
   void dispose() {
     _animationController?.dispose(); // Dispose the controller
     super.dispose();
+  }
+
+  void _loadStreakData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _bestStreak = prefs.getInt(SettingsKey.bestStreak.asString) ?? DefaultSettings.get<int>(SettingsKey.bestStreak);
+    });
+  }
+
+  void _saveStreakData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(SettingsKey.bestStreak.asString, _bestStreak);
+  }
+
+  void _incrementStreak() {
+    setState(() {
+      _currentStreak++;
+      if (_currentStreak > _bestStreak) {
+        _bestStreak = _currentStreak;
+      }
+    });
+    _saveStreakData();
+  }
+
+  void _resetCurrentStreak() {
+    setState(() {
+      _currentStreak = 0;
+    });
   }
 
   void _buttonPressed() {
@@ -169,6 +225,10 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
             // Missed hitzone - apply penalty
             _applyPenalty();
             return;
+          } else {
+            // Successful hit - increment streak
+            _incrementStreak();
+            _streakIncrementedThisRound = true;
           }
         }
       }();
@@ -209,6 +269,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     setState(() {
       _isDeLoading = true;
       _progress = 1.0; // Ensure progress starts at 100% visually
+      _streakIncrementedThisRound = false; // Reset for this round
     });
 
     // Generate a random duration based on user settings
@@ -233,6 +294,9 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
     final int penaltyTime =
         prefs.getInt(SettingsKey.penaltyTime.asString) ?? DefaultSettings.get<int>(SettingsKey.penaltyTime);
 
+    // Reset current streak on penalty
+    _resetCurrentStreak();
+
     // Play sound and visual effect for penalty
     if (prefs.getBool(SettingsKey.sound.asString) ?? DefaultSettings.get<bool>(SettingsKey.sound)) {
       _playSound();
@@ -247,6 +311,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
       _isPenaltyActive = true;
       _isDeLoading = false;
       _progress = 0.0;
+      _streakIncrementedThisRound = false; // Reset for next round
     });
 
     _animationController?.stop();
@@ -269,7 +334,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            const Padding(
+            Padding(
               padding: EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
               child: Text(
                 'Press the button to start a de-loading sequence:',
@@ -277,7 +342,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                 style: TextStyle(fontSize: 16),
               ),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
             SizedBox(
               width: MediaQuery.of(context).size.width * 0.6, // 60% of column width
               child: LinearProgressIndicator(
@@ -293,10 +358,41 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
               '${(_progress * 100).toStringAsFixed(0)}%',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: _isPenaltyActive ? Colors.grey : null),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 15),
+            // Streak display with toggle functionality
+            FutureBuilder<bool>(
+              future: () async {
+                final prefs = await SharedPreferences.getInstance();
+                return prefs.getBool(SettingsKey.showBestStreak.asString) ??
+                    DefaultSettings.get<bool>(SettingsKey.showBestStreak);
+              }(),
+              builder: (context, snapshot) {
+                final showBest = snapshot.data ?? false;
+                return GestureDetector(
+                  onTap: () async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool(SettingsKey.showBestStreak.asString, !showBest);
+                    setState(() {}); // Refresh to update display
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+                    child: Text(
+                      showBest ? 'Best Streak: $_bestStreak 🏆' : 'Current Streak: $_currentStreak 🔥',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: showBest ? Colors.amber[700] : Colors.orange[700],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 15),
             Text(
               _isPenaltyActive
-                  ? 'Status: Penalty Active (UI Frozen)'
+                  ? 'Status: Penalty active!'
                   : (_isDeLoading)
                   ? 'Status: De-Loading...'
                   : 'Status: Ready',
@@ -325,6 +421,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
             switch (key) {
               case SettingsKey.sound:
               case SettingsKey.visualEffect:
+              case SettingsKey.showBestStreak:
                 currentSettings[key] = prefs.getBool(key.asString) ?? DefaultSettings.get<bool>(key);
                 break;
               default:
@@ -373,6 +470,11 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             title: const Text('Visual Effect'),
                             value: dialogSettings[SettingsKey.visualEffect],
                             onChanged: (val) => setState(() => dialogSettings[SettingsKey.visualEffect] = val),
+                          ),
+                          SwitchListTile(
+                            title: const Text('Show Best Streak (vs Current)'),
+                            value: dialogSettings[SettingsKey.showBestStreak],
+                            onChanged: (val) => setState(() => dialogSettings[SettingsKey.showBestStreak] = val),
                           ),
                           ListTile(
                             title: const Text('Hitzone Before (ms)'),
@@ -455,6 +557,33 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                         }),
                         child: const Text('Reset to Defaults'),
                       ),
+                      TextButton(
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Confirm Resetting Streaks'),
+                              content: const Text('Are you sure you want to reset streaks? This cannot be undone.'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(context).pop(false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(context).pop(true),
+                                  child: const Text('Reset'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            // Reset streaks
+                            await prefs.setInt(SettingsKey.bestStreak.asString, 0);
+                            _loadStreakData(); // Reload streak data
+                          }
+                        },
+                        child: const Text('Reset Streaks'),
+                      ),
                       ElevatedButton(
                         onPressed: () async {
                           // Save settings
@@ -467,6 +596,7 @@ class _MyHomePageState extends State<MyHomePage> with SingleTickerProviderStateM
                             }
                           }
                           Navigator.of(context).pop();
+                          _loadStreakData(); // Reload streak data
                           setState(() {}); // Refresh main page if needed
                         },
                         child: const Text('Save'),
